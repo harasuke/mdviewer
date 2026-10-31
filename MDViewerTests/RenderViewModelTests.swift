@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import MDViewer
 
@@ -15,7 +16,7 @@ final class RenderViewModelTests: XCTestCase {
         defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         // 前回の実行が途中で止まって残った値を消す
         defaults.removePersistentDomain(forName: suiteName)
-        sut = RenderViewModel(settings: defaults)
+        sut = RenderViewModel(settings: defaults, systemIsDark: false, systemAppearanceChanges: Empty<Bool, Never>().eraseToAnyPublisher())
     }
 
     override func tearDown() async throws {
@@ -169,72 +170,130 @@ final class RenderViewModelTests: XCTestCase {
         // Assert — no crash
     }
 
-    // MARK: - applySystemAppearance
+    // MARK: - Following the system appearance
 
-    func test_applySystemAppearance_lightThemeAndDarkMode_switchesToGithubDark() {
-        // Arrange
-        sut.setTheme(.githubLight)
-
-        // Act
-        sut.applySystemAppearance(isDark: true)
-
-        // Assert
-        XCTAssertEqual(sut.theme, .githubDark)
+    private func makeVM(
+        systemIsDark: Bool,
+        changes: AnyPublisher<Bool, Never> = Empty<Bool, Never>().eraseToAnyPublisher()
+    ) -> RenderViewModel {
+        RenderViewModel(settings: defaults, systemIsDark: systemIsDark, systemAppearanceChanges: changes)
     }
 
-    func test_applySystemAppearance_darkThemeAndLightMode_switchesToGithubLight() {
-        // Arrange
-        sut.setTheme(.githubDark)
+    func test_setTheme_sameAsResolvedTheme_stillPins() {
+        let vm = makeVM(systemIsDark: true)
+        XCTAssertEqual(vm.theme, .githubDark)
 
-        // Act
-        sut.applySystemAppearance(isDark: false)
+        vm.setTheme(.githubDark)
+        vm.applySystemAppearance(isDark: false)
 
-        // Assert
-        XCTAssertEqual(sut.theme, .githubLight)
+        XCTAssertEqual(vm.theme, .githubDark)
+        XCTAssertEqual(vm.windowThemeOverride, .githubDark)
     }
 
-    func test_applySystemAppearance_nonGithubThemeAndDarkMode_doesNotChangeTheme() throws {
-        // Arrange
-        try sut.setTheme(XCTUnwrap(MarkdownTheme.all.first(where: { $0.id == "dracula" })))
+    func test_init_followOn_darkSystem_usesDarkSlot() {
+        defaults.set("nord", forKey: "darkThemeId")
 
-        // Act
-        sut.applySystemAppearance(isDark: true)
+        let vm = makeVM(systemIsDark: true)
 
-        // Assert — non-GitHub theme should not be changed
-        XCTAssertEqual(sut.theme.id, "dracula")
+        XCTAssertEqual(vm.theme.id, "nord")
     }
 
-    func test_applySystemAppearance_nonGithubThemeAndLightMode_doesNotChangeTheme() throws {
-        // Arrange
-        try sut.setTheme(XCTUnwrap(MarkdownTheme.all.first(where: { $0.id == "nord" })))
+    func test_init_followOff_ignoresSystem() {
+        defaults.set(false, forKey: "followSystemAppearance")
+        defaults.set("solarized-light", forKey: "selectedThemeId")
 
-        // Act
-        sut.applySystemAppearance(isDark: false)
+        let vm = makeVM(systemIsDark: true)
 
-        // Assert
-        XCTAssertEqual(sut.theme.id, "nord")
+        XCTAssertEqual(vm.theme.id, "solarized-light")
     }
 
-    func test_applySystemAppearance_lightThemeAndLightMode_doesNotChangeTheme() {
-        // Arrange
-        sut.setTheme(.githubLight)
+    func test_applySystemAppearance_followOn_switchesSlot() {
+        defaults.set(true, forKey: "followSystemAppearance")
+        defaults.set("solarized-light", forKey: "lightThemeId")
+        defaults.set("dracula", forKey: "darkThemeId")
+        let vm = makeVM(systemIsDark: false)
+        XCTAssertEqual(vm.theme.id, "solarized-light")
 
-        // Act
-        sut.applySystemAppearance(isDark: false)
+        vm.applySystemAppearance(isDark: true)
+        XCTAssertEqual(vm.theme.id, "dracula")
 
-        // Assert
-        XCTAssertEqual(sut.theme, .githubLight)
+        vm.applySystemAppearance(isDark: false)
+        XCTAssertEqual(vm.theme.id, "solarized-light")
     }
 
-    func test_applySystemAppearance_darkThemeAndDarkMode_doesNotChangeTheme() {
-        // Arrange
-        sut.setTheme(.githubDark)
+    func test_applySystemAppearance_followOff_keepsFixedTheme() {
+        defaults.set(false, forKey: "followSystemAppearance")
+        defaults.set("solarized-light", forKey: "selectedThemeId")
+        let vm = makeVM(systemIsDark: false)
 
-        // Act
-        sut.applySystemAppearance(isDark: true)
+        vm.applySystemAppearance(isDark: true)
 
-        // Assert
-        XCTAssertEqual(sut.theme, .githubDark)
+        XCTAssertEqual(vm.theme.id, "solarized-light")
+    }
+
+    func test_systemAppearancePublisher_appliesChange() {
+        let subject = PassthroughSubject<Bool, Never>()
+        let vm = makeVM(systemIsDark: false, changes: subject.eraseToAnyPublisher())
+
+        subject.send(true)
+
+        let applied = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in vm.theme.isDark },
+            object: nil
+        )
+        wait(for: [applied], timeout: 2)
+    }
+
+    func test_setTheme_pinsWindow_ignoresAppearanceChange() {
+        let vm = makeVM(systemIsDark: false)
+
+        vm.setTheme(.githubLight)
+        vm.applySystemAppearance(isDark: true)
+
+        XCTAssertEqual(vm.theme, .githubLight)
+    }
+
+    func test_setTheme_pinsWindow_ignoresPreviewThemeChanged() {
+        let vm = makeVM(systemIsDark: false)
+        vm.setTheme(.githubLight)
+
+        defaults.set("solarized-light", forKey: "lightThemeId")
+        NotificationCenter.default.post(name: .previewThemeChanged, object: nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+
+        XCTAssertEqual(vm.theme, .githubLight)
+    }
+
+    func test_useSettingsTheme_afterAppearanceChangedWhilePinned_usesCurrentAppearance() throws {
+        defaults.set(true, forKey: "followSystemAppearance")
+        defaults.set("dracula", forKey: "darkThemeId")
+        let vm = makeVM(systemIsDark: false)
+
+        try vm.setTheme(XCTUnwrap(MarkdownTheme.withId("solarized-light")))
+        vm.applySystemAppearance(isDark: true)
+        XCTAssertEqual(vm.theme.id, "solarized-light")
+
+        vm.useSettingsTheme()
+
+        XCTAssertEqual(vm.theme.id, "dracula")
+        XCTAssertNil(vm.windowThemeOverride)
+    }
+
+    func test_previewThemeChanged_followTurnedOn_appliesSlotForCurrentAppearance() {
+        defaults.set(false, forKey: "followSystemAppearance")
+        defaults.set("github-light", forKey: "selectedThemeId")
+        let vm = makeVM(systemIsDark: true)
+        XCTAssertEqual(vm.theme, .githubLight)
+
+        defaults.set(true, forKey: "followSystemAppearance")
+        defaults.set("dracula", forKey: "darkThemeId")
+        NotificationCenter.default.post(name: .previewThemeChanged, object: nil)
+
+        let applied = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in vm.theme.id == "dracula" },
+            object: nil
+        )
+        wait(for: [applied], timeout: 2)
     }
 
     // MARK: - Crash-loop guard
@@ -764,27 +823,6 @@ final class RenderViewModelTests: XCTestCase {
 
     // MARK: - 設定画面のテーマ変更（#19）
 
-    func test_previewThemeChanged_appliesThemeToOpenWindow() throws {
-        sut.setTheme(.githubLight)
-
-        NotificationCenter.default.post(name: .previewThemeChanged, object: "nord")
-
-        let applied = XCTNSPredicateExpectation(
-            predicate: NSPredicate { _, _ in self.sut.theme.id == "nord" },
-            object: nil
-        )
-        wait(for: [applied], timeout: 2)
-    }
-
-    func test_previewThemeChanged_unknownTheme_keepsCurrentTheme() {
-        sut.setTheme(.githubDark)
-
-        NotificationCenter.default.post(name: .previewThemeChanged, object: "no-such-theme")
-        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
-
-        XCTAssertEqual(sut.theme, .githubDark)
-    }
-
     // MARK: - 設定画面の文字サイズ変更
 
     func test_previewFontSizeChanged_appliesFontSizeWithoutWritingSettings() {
@@ -848,7 +886,7 @@ final class RenderViewModelTests: XCTestCase {
         defaults.set("nord", forKey: "selectedThemeId")
         defaults.set(20.0, forKey: "fontSize")
 
-        let vm = RenderViewModel(settings: defaults)
+        let vm = RenderViewModel(settings: defaults, systemIsDark: true, systemAppearanceChanges: Empty<Bool, Never>().eraseToAnyPublisher())
 
         XCTAssertEqual(vm.theme.id, "nord")
         XCTAssertEqual(vm.fontSize, 20)
@@ -864,7 +902,7 @@ final class RenderViewModelTests: XCTestCase {
     func test_init_fontSizeStoredAsString_isRead() {
         defaults.set("20", forKey: "fontSize")
 
-        let vm = RenderViewModel(settings: defaults)
+        let vm = RenderViewModel(settings: defaults, systemIsDark: false, systemAppearanceChanges: Empty<Bool, Never>().eraseToAnyPublisher())
 
         XCTAssertEqual(vm.fontSize, 20)
     }
@@ -873,7 +911,7 @@ final class RenderViewModelTests: XCTestCase {
     func test_init_unreadableFontSize_usesDefault() {
         defaults.set("abc", forKey: "fontSize")
 
-        let vm = RenderViewModel(settings: defaults)
+        let vm = RenderViewModel(settings: defaults, systemIsDark: false, systemAppearanceChanges: Empty<Bool, Never>().eraseToAnyPublisher())
 
         XCTAssertEqual(vm.fontSize, 16)
     }
@@ -881,22 +919,22 @@ final class RenderViewModelTests: XCTestCase {
     func test_init_zeroFontSize_usesDefault() {
         defaults.set(0.0, forKey: "fontSize")
 
-        let vm = RenderViewModel(settings: defaults)
+        let vm = RenderViewModel(settings: defaults, systemIsDark: false, systemAppearanceChanges: Empty<Bool, Never>().eraseToAnyPublisher())
 
         XCTAssertEqual(vm.fontSize, 16)
     }
 
     func test_init_fontSizeOutOfRange_clamped() {
         defaults.set(100.0, forKey: "fontSize")
-        XCTAssertEqual(RenderViewModel(settings: defaults).fontSize, 32)
+        XCTAssertEqual(RenderViewModel(settings: defaults, systemIsDark: false, systemAppearanceChanges: Empty<Bool, Never>().eraseToAnyPublisher()).fontSize, 32)
 
         defaults.set(4.0, forKey: "fontSize")
-        XCTAssertEqual(RenderViewModel(settings: defaults).fontSize, 10)
+        XCTAssertEqual(RenderViewModel(settings: defaults, systemIsDark: false, systemAppearanceChanges: Empty<Bool, Never>().eraseToAnyPublisher()).fontSize, 10)
     }
 
     /// ツールバーや ⌘+ の変更はそのウィンドウだけに効く。同じ保存先を使う他のウィンドウには広がらない
     func test_setFontSize_doesNotChangeOtherWindowSharingSettings() {
-        let other = RenderViewModel(settings: defaults)
+        let other = RenderViewModel(settings: defaults, systemIsDark: false, systemAppearanceChanges: Empty<Bool, Never>().eraseToAnyPublisher())
 
         sut.setFontSize(20)
         RunLoop.main.run(until: Date().addingTimeInterval(0.2))
