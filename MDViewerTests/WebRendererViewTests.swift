@@ -223,10 +223,27 @@ final class RendererScriptTests: XCTestCase {
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
+        // #content is inside <body>: it is parsed after every <head> script has run and before
+        // DOMContentLoaded. Recording the href at that moment shows the swap happened before load.
+        config.userContentController.addUserScript(WKUserScript(
+            source: """
+            new MutationObserver(function (_, observer) {
+                if (document.getElementById('content')) {
+                    var link = document.getElementById('theme-css');
+                    window.__hrefAtBodyParse = link ? link.getAttribute('href') : null;
+                    observer.disconnect();
+                }
+            }).observe(document, { childList: true, subtree: true });
+            """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 400), configuration: config)
         webView.loadFileURL(rendererURL, allowingReadAccessTo: resourcesDir)
         try await waitUntil("typeof MDViewer !== 'undefined' && document.readyState === 'complete'")
 
+        let hrefAtBodyParse = try await evaluate("return window.__hrefAtBodyParse") as? String
+        XCTAssertEqual(hrefAtBodyParse, "themes/nord.css")
         let href = try await evaluate("return document.getElementById('theme-css').getAttribute('href')") as? String
         XCTAssertEqual(href, "themes/nord.css")
         let dark = try await evaluate("return document.body.classList.contains('dark-theme')") as? Bool
