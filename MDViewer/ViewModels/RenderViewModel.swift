@@ -175,8 +175,38 @@ final class RenderViewModel: ObservableObject {
     /// The one place that updates theme and sends it to the page.
     private func apply(_ newTheme: MarkdownTheme) {
         guard newTheme != theme else { return }
+        let oldTheme = theme
         theme = newTheme
+        // Pages loaded later (a reload, crash recovery) also start in this theme.
+        installInitialThemeScript()
         webView?.evaluateJavaScript(Self.setThemeScript(for: newTheme), completionHandler: nil)
+        // Mermaid bakes the colours into its SVG when it draws, so redraw when light/dark changes.
+        if Self.needsRerenderForThemeChange(from: oldTheme, to: newTheme, markdown: lastRenderedMarkdown),
+           isRendererReady, let markdown = lastRenderedMarkdown {
+            renderMarkdown(markdown)
+        }
+    }
+
+    /// Redraws only when light/dark changes and the document may contain a Mermaid diagram.
+    static func needsRerenderForThemeChange(from old: MarkdownTheme, to new: MarkdownTheme, markdown: String?) -> Bool {
+        old.isDark != new.isDark && markdown?.contains("mermaid") == true
+    }
+
+    /// Initial theme handed to mdviewer.js before the page loads: the stylesheet and background
+    /// are decided before the first paint, so there is no white flash.
+    static func initialThemeScriptSource(for theme: MarkdownTheme) -> String {
+        "window.MDViewerInitialTheme = { css: '\(theme.cssFileName)', isDark: \(theme.isDark), background: '\(theme.backgroundHex)' };"
+    }
+
+    /// Replaces the initial-theme script with the current theme's, leaving no stale one behind.
+    func installInitialThemeScript() {
+        guard let controller = webView?.configuration.userContentController else { return }
+        controller.removeAllUserScripts()
+        controller.addUserScript(WKUserScript(
+            source: Self.initialThemeScriptSource(for: theme),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
     }
 
     private static func readSystemIsDark() -> Bool {

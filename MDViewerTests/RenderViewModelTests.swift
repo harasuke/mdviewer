@@ -1,4 +1,5 @@
 import Combine
+import WebKit
 import XCTest
 @testable import MDViewer
 
@@ -177,6 +178,41 @@ final class RenderViewModelTests: XCTestCase {
         changes: AnyPublisher<Bool, Never> = Empty<Bool, Never>().eraseToAnyPublisher()
     ) -> RenderViewModel {
         RenderViewModel(settings: defaults, systemIsDark: systemIsDark, systemAppearanceChanges: changes)
+    }
+
+    // MARK: - Theme of the first paint
+
+    func test_initialThemeScriptSource_nord() throws {
+        let nord = try XCTUnwrap(MarkdownTheme.withId("nord"))
+        XCTAssertEqual(
+            RenderViewModel.initialThemeScriptSource(for: nord),
+            "window.MDViewerInitialTheme = { css: 'nord', isDark: true, background: '#2e3440' };"
+        )
+    }
+
+    func test_setTheme_replacesInitialThemeUserScript() throws {
+        let wv = WKWebView()
+        sut.webView = wv
+
+        sut.setTheme(try XCTUnwrap(MarkdownTheme.withId("nord")))
+        sut.setTheme(try XCTUnwrap(MarkdownTheme.withId("dracula")))
+
+        let scripts = wv.configuration.userContentController.userScripts
+        XCTAssertEqual(scripts.count, 1)
+        XCTAssertTrue(scripts[0].source.contains("'dracula'"))
+        XCTAssertEqual(scripts[0].injectionTime, .atDocumentStart)
+    }
+
+    func test_installInitialThemeScript_withoutWebView_doesNothing() {
+        sut.installInitialThemeScript()
+    }
+
+    func test_needsRerenderForThemeChange() {
+        let mermaid = "```mermaid\ngraph TD; A-->B\n```"
+        XCTAssertTrue(RenderViewModel.needsRerenderForThemeChange(from: .githubLight, to: .githubDark, markdown: mermaid))
+        XCTAssertFalse(RenderViewModel.needsRerenderForThemeChange(from: .githubLight, to: .githubLight, markdown: mermaid))
+        XCTAssertFalse(RenderViewModel.needsRerenderForThemeChange(from: .githubDark, to: .githubLight, markdown: "# plain"))
+        XCTAssertFalse(RenderViewModel.needsRerenderForThemeChange(from: .githubLight, to: .githubDark, markdown: nil))
     }
 
     func test_setTheme_sameAsResolvedTheme_stillPins() {

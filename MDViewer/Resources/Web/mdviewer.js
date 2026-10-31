@@ -25,6 +25,27 @@
         });
     }
 
+    // Initial theme Swift passes before the page loads. The <link> already exists at this
+    // point in <head>, so the stylesheet is swapped before the first paint. No background is
+    // set on <html> or <body>: the theme's body background reaches the canvas by itself.
+    if (window.MDViewerInitialTheme) {
+        const initial = window.MDViewerInitialTheme;
+        const link = document.getElementById('theme-css');
+        if (link) {
+            link.href = `themes/${initial.css}.css`;
+        }
+        if (typeof mermaid !== 'undefined') {
+            mermaid.initialize({
+                startOnLoad: false,
+                theme: initial.isDark ? 'dark' : 'default',
+                securityLevel: 'strict'
+            });
+        }
+        document.addEventListener('DOMContentLoaded', function () {
+            document.body.classList.toggle('dark-theme', initial.isDark);
+        });
+    }
+
     // 文書に書かれた HTML は marked がそのまま通すので、DOM に入れる前に
     // script・イベントハンドラ・javascript: などの URL を取り除く。リンクの
     // scheme は Swift 側で開くもの（http・https・mailto・file）と相対パスに限る。

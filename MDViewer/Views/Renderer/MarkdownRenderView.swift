@@ -10,6 +10,7 @@ struct MarkdownRenderView: View {
         ZStack(alignment: .top) {
             ZStack(alignment: .bottomLeading) {
                 WebRendererView(renderVM: renderVM, sidebarVM: sidebarVM)
+                    .background(renderVM.theme.backgroundColor)
 
                 if !renderVM.hoveredURL.isEmpty {
                     Text(renderVM.hoveredURL)

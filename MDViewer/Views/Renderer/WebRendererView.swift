@@ -37,6 +37,8 @@ struct WebRendererView: NSViewRepresentable {
 
         context.coordinator.webView = webView
         renderVM.webView = webView
+        // Install it before loading, so the first paint already uses the theme's colours.
+        renderVM.installInitialThemeScript()
         renderVM.schemeHandler = context.coordinator.schemeHandler
         renderVM.reloadRenderer = { [weak coordinator = context.coordinator] in
             guard let webView = coordinator?.webView else { return false }
@@ -307,6 +309,15 @@ struct WebRendererView: NSViewRepresentable {
 /// step before the real frame. The web view would paint that empty viewport as
 /// a white flash; such frames are never meaningful for the preview, so ignore them.
 final class RendererWebView: WKWebView {
+    override init(frame: CGRect, configuration: WKWebViewConfiguration) {
+        super.init(frame: frame, configuration: configuration)
+        // Show the SwiftUI background (the theme's colour) until the page has painted.
+        setValue(false, forKey: "drawsBackground")
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
     override func setFrameSize(_ newSize: NSSize) {
         guard newSize.width >= 1, newSize.height >= 1 else { return }
         super.setFrameSize(newSize)

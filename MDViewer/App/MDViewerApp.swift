@@ -215,6 +215,7 @@ struct HelpView: View {
             },
             detail: {
                 WebRendererView(renderVM: renderVM, sidebarVM: sidebarVM)
+                    .background(renderVM.theme.backgroundColor)
                     .frame(minWidth: 500, minHeight: 400)
             }
         )

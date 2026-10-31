@@ -211,6 +211,33 @@ final class RendererScriptTests: XCTestCase {
         try await webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
     }
 
+    // MARK: Initial theme
+
+    func test_initialTheme_userScript_setsStylesheetBeforeLoad() async throws {
+        let rendererURL = try XCTUnwrap(HTMLBuilder.rendererURL())
+        let resourcesDir = try XCTUnwrap(HTMLBuilder.webResourcesDirectory())
+        let nord = try XCTUnwrap(MarkdownTheme.withId("nord"))
+        let config = WKWebViewConfiguration()
+        config.userContentController.addUserScript(WKUserScript(
+            source: RenderViewModel.initialThemeScriptSource(for: nord),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 400), configuration: config)
+        webView.loadFileURL(rendererURL, allowingReadAccessTo: resourcesDir)
+        try await waitUntil("typeof MDViewer !== 'undefined' && document.readyState === 'complete'")
+
+        let href = try await evaluate("return document.getElementById('theme-css').getAttribute('href')") as? String
+        XCTAssertEqual(href, "themes/nord.css")
+        let dark = try await evaluate("return document.body.classList.contains('dark-theme')") as? Bool
+        XCTAssertEqual(dark, true)
+
+        _ = try await evaluate("MDViewer.setTheme('github-light', false)")
+        try await waitUntil("getComputedStyle(document.body).backgroundColor === 'rgb(255, 255, 255)'")
+        let htmlBackground = try await evaluate("return getComputedStyle(document.documentElement).backgroundColor") as? String
+        XCTAssertEqual(htmlBackground, "rgba(0, 0, 0, 0)")
+    }
+
     // MARK: Performance
 
     /// 描画にかかった時間（ミリ秒）。
@@ -1115,5 +1142,13 @@ private final class NotificationRecorder {
 
     deinit {
         if let observer { NotificationCenter.default.removeObserver(observer) }
+    }
+}
+
+@MainActor
+final class RendererWebViewBackgroundTests: XCTestCase {
+    func test_rendererWebView_doesNotDrawBackground() {
+        let wv = RendererWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        XCTAssertEqual(wv.value(forKey: "drawsBackground") as? Bool, false)
     }
 }
