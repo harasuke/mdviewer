@@ -60,6 +60,13 @@ final class RenderViewModel: ObservableObject {
     private var lastRenderedMarkdown: String?
     private var lastBaseURL: URL?
 
+    /// Whether the content on screen holds a Mermaid diagram, as the page last
+    /// reported it with renderComplete.
+    private var displayedContentHasDiagrams = false
+    /// Content was sent to the page and its renderComplete has not arrived yet,
+    /// so displayedContentHasDiagrams may describe the previous content.
+    private var isRenderInFlight = false
+
     /// Crash-loop guard: if the content itself crashes the WebContent process,
     /// re-rendering it on recovery would crash again indefinitely.
     private var consecutiveFailures = 0
@@ -181,15 +188,20 @@ final class RenderViewModel: ObservableObject {
         installInitialThemeScript()
         webView?.evaluateJavaScript(Self.setThemeScript(for: newTheme), completionHandler: nil)
         // Mermaid bakes the colours into its SVG when it draws, so redraw when light/dark changes.
-        if Self.needsRerenderForThemeChange(from: oldTheme, to: newTheme, markdown: lastRenderedMarkdown),
-           isRendererReady, let markdown = lastRenderedMarkdown {
+        if Self.needsRerenderForThemeChange(
+            from: oldTheme, to: newTheme,
+            hasDiagrams: displayedContentHasDiagrams, isRenderInFlight: isRenderInFlight
+        ), isRendererReady, let markdown = lastRenderedMarkdown {
             renderMarkdown(markdown)
         }
     }
 
-    /// Redraws only when light/dark changes and the document may contain a Mermaid diagram.
-    static func needsRerenderForThemeChange(from old: MarkdownTheme, to new: MarkdownTheme, markdown: String?) -> Bool {
-        old.isDark != new.isDark && markdown?.contains("mermaid") == true
+    /// Redraws only when light/dark changes and a Mermaid diagram is on screen, or
+    /// may be about to be: while a render is in flight the page has not said yet.
+    static func needsRerenderForThemeChange(
+        from old: MarkdownTheme, to new: MarkdownTheme, hasDiagrams: Bool, isRenderInFlight: Bool
+    ) -> Bool {
+        old.isDark != new.isDark && (hasDiagrams || isRenderInFlight)
     }
 
     /// Initial theme handed to mdviewer.js before the page loads: the stylesheet and background
@@ -278,6 +290,7 @@ final class RenderViewModel: ObservableObject {
         }
         let escaped = escapeForJS(markdown)
         webView?.evaluateJavaScript("MDViewer.setContent('\(escaped)')", completionHandler: nil)
+        isRenderInFlight = true
     }
 
     /// Once the guard has given up, new content — an edit, reloading the file,
@@ -348,12 +361,17 @@ final class RenderViewModel: ObservableObject {
         return true
     }
 
-    /// Clears the crash-loop counter once a render has demonstrably succeeded.
+    /// Clears the crash-loop counter once a render has demonstrably succeeded,
+    /// and records whether a Mermaid diagram is now on screen.
     ///
     /// This runs after every render, so it must stay a no-op in the common case:
     /// assigning to a @Published property publishes even when the value is
     /// unchanged, which would invalidate the view on every keystroke.
-    func noteRenderSucceeded() {
+    ///
+    /// - Parameter hasDiagrams: whether the page now shows a Mermaid diagram.
+    func noteRenderSucceeded(hasDiagrams: Bool = false) {
+        isRenderInFlight = false
+        displayedContentHasDiagrams = hasDiagrams
         guard consecutiveFailures != 0 || lastFailureTime != nil || renderFailureMessage != nil
             || isPreviewInterrupted
         else {
@@ -392,6 +410,9 @@ final class RenderViewModel: ObservableObject {
 
     func rendererDidLoad() {
         isRendererReady = true
+        // A fresh page shows nothing yet.
+        displayedContentHasDiagrams = false
+        isRenderInFlight = false
         if isRecoveryHalted {
             resumeRecovery()
         }
@@ -415,6 +436,7 @@ final class RenderViewModel: ObservableObject {
             pendingMarkdown = nil
             let escaped = escapeForJS(md)
             webView?.evaluateJavaScript("MDViewer.setContent('\(escaped)')", completionHandler: nil)
+            isRenderInFlight = true
         }
 
         // 入力が止まるのを待っている語があれば、そちらで検索する。確定済みの古い語で

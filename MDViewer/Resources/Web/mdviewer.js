@@ -466,10 +466,15 @@
     }
 
     // Tells Swift the renderer is alive and showing valid content, which clears
-    // the crash-loop guard.
+    // the crash-loop guard. hasDiagrams says whether what is on screen holds a
+    // Mermaid diagram, so Swift knows a light/dark switch has to draw it again.
+    // It is read from the page, not the source: when a render is kept back the
+    // previous content is still what is shown.
     function notifyRenderComplete() {
         if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.renderComplete) {
-            window.webkit.messageHandlers.renderComplete.postMessage(null);
+            const contentEl = document.getElementById('content');
+            const hasDiagrams = contentEl !== null && contentEl.querySelector('.mermaid') !== null;
+            window.webkit.messageHandlers.renderComplete.postMessage({ hasDiagrams: hasDiagrams });
         }
     }
 

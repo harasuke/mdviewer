@@ -82,7 +82,7 @@ struct WebRendererView: NSViewRepresentable {
             case "headingsExtracted":
                 handleHeadingsExtracted(message.body)
             case "renderComplete":
-                handleRenderComplete()
+                handleRenderComplete(message.body)
             case "renderFailed":
                 let reason = message.body as? String ?? "unknown"
                 NSLog("MDViewer: render failed in WebView: %@", reason)
@@ -163,8 +163,9 @@ struct WebRendererView: NSViewRepresentable {
 
         /// A completed render is the proof that the renderer is healthy, so it
         /// clears the crash-loop guard.
-        private func handleRenderComplete() {
-            Task { @MainActor in self.renderVM.noteRenderSucceeded() }
+        private func handleRenderComplete(_ body: Any) {
+            let hasDiagrams = (body as? [String: Any])?["hasDiagrams"] as? Bool ?? false
+            Task { @MainActor in self.renderVM.noteRenderSucceeded(hasDiagrams: hasDiagrams) }
         }
 
         // MARK: - Renderer loading / recovery

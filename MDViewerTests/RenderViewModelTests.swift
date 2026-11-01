@@ -217,18 +217,22 @@ final class RenderViewModelTests: XCTestCase {
     }
 
     func test_needsRerenderForThemeChange() {
-        let mermaid = "```mermaid\ngraph TD; A-->B\n```"
-        XCTAssertTrue(RenderViewModel.needsRerenderForThemeChange(from: .githubLight, to: .githubDark, markdown: mermaid))
-        XCTAssertFalse(RenderViewModel.needsRerenderForThemeChange(from: .githubLight, to: .githubLight, markdown: mermaid))
-        XCTAssertFalse(RenderViewModel.needsRerenderForThemeChange(from: .githubDark, to: .githubLight, markdown: "# plain"))
-        XCTAssertFalse(RenderViewModel.needsRerenderForThemeChange(from: .githubLight, to: .githubDark, markdown: nil))
+        XCTAssertTrue(RenderViewModel.needsRerenderForThemeChange(
+            from: .githubLight, to: .githubDark, hasDiagrams: true, isRenderInFlight: false))
+        XCTAssertTrue(RenderViewModel.needsRerenderForThemeChange(
+            from: .githubDark, to: .githubLight, hasDiagrams: false, isRenderInFlight: true))
+        XCTAssertFalse(RenderViewModel.needsRerenderForThemeChange(
+            from: .githubLight, to: .githubLight, hasDiagrams: true, isRenderInFlight: true))
+        XCTAssertFalse(RenderViewModel.needsRerenderForThemeChange(
+            from: .githubDark, to: .githubLight, hasDiagrams: false, isRenderInFlight: false))
     }
 
-    func test_systemAppearanceFlip_withMermaid_rendersAgainAfterTheme() throws {
+    func test_systemAppearanceFlip_withDiagramOnScreen_rendersAgainAfterTheme() throws {
         let recorder = ScriptRecordingWebView(frame: .zero, configuration: WKWebViewConfiguration())
         sut.webView = recorder
         sut.rendererDidLoad()
         sut.renderMarkdown("```mermaid\ngraph TD; A-->B\n```")
+        sut.noteRenderSucceeded(hasDiagrams: true)
         recorder.scripts.removeAll()
 
         sut.applySystemAppearance(isDark: true)
@@ -238,17 +242,45 @@ final class RenderViewModelTests: XCTestCase {
         XCTAssertGreaterThan(renderIndex, themeIndex)
     }
 
-    func test_systemAppearanceFlip_withoutMermaid_doesNotRenderAgain() {
+    func test_systemAppearanceFlip_withoutDiagram_doesNotRenderAgain() {
         let recorder = ScriptRecordingWebView(frame: .zero, configuration: WKWebViewConfiguration())
         sut.webView = recorder
         sut.rendererDidLoad()
         sut.renderMarkdown("# Title")
+        sut.noteRenderSucceeded(hasDiagrams: false)
         recorder.scripts.removeAll()
 
         sut.applySystemAppearance(isDark: true)
 
         XCTAssertTrue(recorder.scripts.contains { $0.contains("MDViewer.setTheme(") })
         XCTAssertFalse(recorder.scripts.contains { $0.contains("MDViewer.setContent(") })
+    }
+
+    func test_systemAppearanceFlip_wordMermaidWithoutDiagram_doesNotRenderAgain() {
+        let recorder = ScriptRecordingWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        sut.webView = recorder
+        sut.rendererDidLoad()
+        sut.renderMarkdown("Notes about `mermaid` and Mermaid syntax.")
+        sut.noteRenderSucceeded(hasDiagrams: false)
+        recorder.scripts.removeAll()
+
+        sut.applySystemAppearance(isDark: true)
+
+        XCTAssertFalse(recorder.scripts.contains { $0.contains("MDViewer.setContent(") })
+    }
+
+    func test_systemAppearanceFlip_whileRenderInFlight_rendersAgain() {
+        let recorder = ScriptRecordingWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        sut.webView = recorder
+        sut.rendererDidLoad()
+        sut.renderMarkdown("# Title")
+        sut.noteRenderSucceeded(hasDiagrams: false)
+        sut.renderMarkdown("```mermaid\ngraph TD; A-->B\n```")
+        recorder.scripts.removeAll()
+
+        sut.applySystemAppearance(isDark: true)
+
+        XCTAssertTrue(recorder.scripts.contains { $0.contains("MDViewer.setContent(") })
     }
 
     func test_setTheme_sameAsResolvedTheme_stillPins() {

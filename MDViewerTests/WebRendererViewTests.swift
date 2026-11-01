@@ -255,6 +255,36 @@ final class RendererScriptTests: XCTestCase {
         XCTAssertEqual(htmlBackground, "rgba(0, 0, 0, 0)")
     }
 
+    // MARK: Diagrams reported with renderComplete
+
+    private func renderCompleteHasDiagrams(after markdown: String) async throws -> Bool? {
+        let recorder = MessageRecorder()
+        webView.configuration.userContentController.add(recorder, name: "renderComplete")
+        defer { webView.configuration.userContentController.removeScriptMessageHandler(forName: "renderComplete") }
+        try await render(markdown)
+        try await waitUntil("true")
+        let body = try XCTUnwrap(recorder.messages.last as? [String: Any])
+        return body["hasDiagrams"] as? Bool
+    }
+
+    func test_renderComplete_mermaidBlock_reportsDiagram() async throws {
+        let hasDiagrams = try await renderCompleteHasDiagrams(after: "# Flow\n\n```mermaid\ngraph TD; A-->B\n```\n")
+        XCTAssertEqual(hasDiagrams, true)
+    }
+
+    func test_renderComplete_wordMermaidOnly_reportsNoDiagram() async throws {
+        let markdown = "Mermaid notes: `mermaid` inline.\n\n```js\nconst mermaid = 1;\n```\n"
+        let hasDiagrams = try await renderCompleteHasDiagrams(after: markdown)
+        XCTAssertEqual(hasDiagrams, false)
+    }
+
+    func test_renderComplete_keptPreviousRender_reportsWhatIsShown() async throws {
+        try await render("```mermaid\ngraph TD; A-->B\n```\n")
+        // Markdown that renders to nothing keeps the previous content on screen.
+        let hasDiagrams = try await renderCompleteHasDiagrams(after: "[x]: https://example.com\n")
+        XCTAssertEqual(hasDiagrams, true)
+    }
+
     // MARK: Performance
 
     /// 描画にかかった時間（ミリ秒）。
